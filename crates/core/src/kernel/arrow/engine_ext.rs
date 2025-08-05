@@ -96,7 +96,7 @@ pub(crate) trait SnapshotExt {
 impl SnapshotExt for Snapshot {
     fn stats_schema(&self) -> DeltaResult<SchemaRef> {
         let physical_schema =
-            StructType::new(self.schema().fields().map(|field| field.make_physical()));
+            StructType::new(self.schema().fields().map(|field| field.make_physical(self.column_mapping_mode())));
         let min_max_transform = MinMaxStatsTransform::new(self.table_properties());
         stats_schema(&physical_schema, min_max_transform)
     }
@@ -108,7 +108,7 @@ pub(crate) fn stats_schema_from_config(
     table_conf: TableConfig<'_>,
 ) -> DeltaResult<SchemaRef> {
     let physical_schema =
-        StructType::new(logical_schema.fields().map(|field| field.make_physical()));
+        StructType::new(logical_schema.fields().map(|field| field.make_physical(table_conf.column_mapping_mode())));
     let min_max_transform = MinMaxStatsTransform::new_from_config(table_conf);
     stats_schema(&physical_schema, min_max_transform)
 }

@@ -232,7 +232,10 @@ impl ScalarExt for Scalar {
             | Union(_, _)
             | ListView(_)
             | LargeListView(_)
-            | Null => None,
+            | Null 
+            | Decimal32(_, _)
+            | Decimal64(_, _)
+            => None,
         }
     }
 

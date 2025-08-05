@@ -1193,7 +1193,10 @@ pub(crate) fn get_null_of_arrow_type(t: &ArrowDataType) -> DeltaResult<ScalarVal
         | ArrowDataType::Utf8View
         | ArrowDataType::LargeListView(_)
         | ArrowDataType::ListView(_)
-        | ArrowDataType::Map(_, _) => Err(DeltaTableError::Generic(format!(
+        | ArrowDataType::Map(_, _)
+        | ArrowDataType::Decimal32(_, _)
+        | ArrowDataType::Decimal64(_, _)
+        => Err(DeltaTableError::Generic(format!(
             "Unsupported data type for Delta Lake {t}"
         ))),
     }
