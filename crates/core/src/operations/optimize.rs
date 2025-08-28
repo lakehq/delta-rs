@@ -29,6 +29,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef as ArrowSchemaRef;
 use delta_kernel::engine::arrow_conversion::TryIntoArrow as _;
 use delta_kernel::expressions::Scalar;
+use delta_kernel::table_properties::DataSkippingNumIndexedCols;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{Future, StreamExt, TryStreamExt};
@@ -49,8 +50,9 @@ use crate::delta_datafusion::DeltaTableProvider;
 use crate::errors::{DeltaResult, DeltaTableError};
 use crate::kernel::transaction::{CommitBuilder, CommitProperties, DEFAULT_RETRIES, PROTOCOL};
 use crate::kernel::{scalars::ScalarExt, Action, Add, PartitionsExt, Remove};
-use crate::logstore::{LogStoreRef, ObjectStoreRef};
+use crate::logstore::{LogStore, LogStoreRef, ObjectStoreRef};
 use crate::protocol::DeltaOperation;
+use crate::table::config::TablePropertiesExt as _;
 use crate::table::state::DeltaTableState;
 use crate::writer::utils::arrow_schema_without_partitions;
 use crate::{crate_version, DeltaTable, ObjectMeta, PartitionFilter};
@@ -198,7 +200,7 @@ pub struct OptimizeBuilder<'a> {
     /// Filters to select specific table partitions to be optimized
     filters: &'a [PartitionFilter],
     /// Desired file size after bin-packing files
-    target_size: Option<i64>,
+    target_size: Option<u64>,
     /// Properties passed to underlying parquet writer
     writer_properties: Option<WriterProperties>,
     /// Commit properties and configuration
@@ -256,7 +258,7 @@ impl<'a> OptimizeBuilder<'a> {
     }
 
     /// Set the target file size
-    pub fn with_target_size(mut self, target: i64) -> Self {
+    pub fn with_target_size(mut self, target: u64) -> Self {
         self.target_size = Some(target);
         self
     }
@@ -326,12 +328,15 @@ impl<'a> std::future::IntoFuture for OptimizeBuilder<'a> {
                     .build()
             });
             let plan = create_merge_plan(
+                &this.log_store,
                 this.optimize_type,
                 &this.snapshot,
                 this.filters,
                 this.target_size.to_owned(),
                 writer_properties,
-            )?;
+            )
+            .await?;
+
             let metrics = plan
                 .execute(
                     this.log_store.clone(),
@@ -357,14 +362,14 @@ impl<'a> std::future::IntoFuture for OptimizeBuilder<'a> {
 
 #[derive(Debug, Clone)]
 struct OptimizeInput {
-    target_size: i64,
+    target_size: u64,
     predicate: Option<String>,
 }
 
 impl From<OptimizeInput> for DeltaOperation {
     fn from(opt_input: OptimizeInput) -> Self {
         DeltaOperation::Optimize {
-            target_size: opt_input.target_size,
+            target_size: opt_input.target_size as i64,
             predicate: opt_input.predicate,
         }
     }
@@ -455,7 +460,7 @@ pub struct MergeTaskParameters {
     /// Properties passed to parquet writer
     writer_properties: WriterProperties,
     /// Num index cols to collect stats for
-    num_indexed_cols: i32,
+    num_indexed_cols: DataSkippingNumIndexedCols,
     /// Stats columns, specific columns to collect stats from, takes precedence over num_indexed_cols
     stats_columns: Option<Vec<String>>,
 }
@@ -784,20 +789,31 @@ impl MergePlan {
 }
 
 /// Build a Plan on which files to merge together. See [OptimizeBuilder]
-pub fn create_merge_plan(
+pub async fn create_merge_plan(
+    log_store: &dyn LogStore,
     optimize_type: OptimizeType,
     snapshot: &DeltaTableState,
     filters: &[PartitionFilter],
-    target_size: Option<i64>,
+    target_size: Option<u64>,
     writer_properties: WriterProperties,
 ) -> Result<MergePlan, DeltaTableError> {
-    let target_size = target_size.unwrap_or_else(|| snapshot.table_config().target_file_size());
+    let target_size =
+        target_size.unwrap_or_else(|| snapshot.table_config().target_file_size().get());
     let partitions_keys = snapshot.metadata().partition_columns();
 
     let (operations, metrics) = match optimize_type {
-        OptimizeType::Compact => build_compaction_plan(snapshot, filters, target_size)?,
+        OptimizeType::Compact => {
+            build_compaction_plan(log_store, snapshot, filters, target_size).await?
+        }
         OptimizeType::ZOrder(zorder_columns) => {
-            build_zorder_plan(zorder_columns, snapshot, partitions_keys, filters)?
+            build_zorder_plan(
+                log_store,
+                zorder_columns,
+                snapshot,
+                partitions_keys,
+                filters,
+            )
+            .await?
         }
     };
 
@@ -820,7 +836,8 @@ pub fn create_merge_plan(
             num_indexed_cols: snapshot.table_config().num_indexed_cols(),
             stats_columns: snapshot
                 .table_config()
-                .stats_columns()
+                .data_skipping_stats_columns
+                .as_ref()
                 .map(|v| v.iter().map(|v| v.to_string()).collect::<Vec<String>>()),
         }),
         read_table_version: snapshot.version(),
@@ -831,7 +848,7 @@ pub fn create_merge_plan(
 #[derive(Debug, Clone)]
 struct MergeBin {
     files: Vec<Add>,
-    size_bytes: i64,
+    size_bytes: u64,
 }
 
 impl MergeBin {
@@ -842,7 +859,7 @@ impl MergeBin {
         }
     }
 
-    fn total_file_size(&self) -> i64 {
+    fn total_file_size(&self) -> u64 {
         self.size_bytes
     }
 
@@ -851,7 +868,7 @@ impl MergeBin {
     }
 
     fn add(&mut self, add: Add) {
-        self.size_bytes += add.size;
+        self.size_bytes += add.size as u64;
         self.files.push(add);
     }
 
@@ -869,33 +886,40 @@ impl IntoIterator for MergeBin {
     }
 }
 
-fn build_compaction_plan(
+async fn build_compaction_plan(
+    log_store: &dyn LogStore,
     snapshot: &DeltaTableState,
     filters: &[PartitionFilter],
-    target_size: i64,
+    target_size: u64,
 ) -> Result<(OptimizeOperations, Metrics), DeltaTableError> {
     let mut metrics = Metrics::default();
 
     let mut partition_files: HashMap<String, (IndexMap<String, Scalar>, Vec<Add>)> = HashMap::new();
-    for add in snapshot.get_active_add_actions_by_partitions(filters)? {
-        let add = add?;
+    let mut file_stream = snapshot.get_active_add_actions_by_partitions(log_store, filters);
+    while let Some(file) = file_stream.next().await {
+        let file = file?;
         metrics.total_considered_files += 1;
-        let object_meta = ObjectMeta::try_from(&add)?;
-        if (object_meta.size as i64) > target_size {
+        let object_meta = ObjectMeta::try_from(&file)?;
+        if object_meta.size > target_size {
             metrics.total_files_skipped += 1;
             continue;
         }
-        let partition_values = add
-            .partition_values()?
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect::<IndexMap<_, _>>();
+        let partition_values = file
+            .partition_values()
+            .map(|v| {
+                v.fields()
+                    .iter()
+                    .zip(v.values().iter())
+                    .map(|(k, v)| (k.name().to_string(), v.clone()))
+                    .collect::<IndexMap<_, _>>()
+            })
+            .unwrap_or_default();
 
         partition_files
-            .entry(add.partition_values()?.hive_partition_path())
+            .entry(partition_values.hive_partition_path())
             .or_insert_with(|| (partition_values, vec![]))
             .1
-            .push(add.add_action());
+            .push(file.add_action());
     }
 
     for (_, file) in partition_files.values_mut() {
@@ -909,7 +933,7 @@ fn build_compaction_plan(
 
         'files: for file in files {
             for bin in merge_bins.iter_mut() {
-                if bin.total_file_size() + file.size <= target_size {
+                if bin.total_file_size() + file.size as u64 <= target_size {
                     bin.add(file);
                     // Move to next file
                     continue 'files;
@@ -942,7 +966,8 @@ fn build_compaction_plan(
     Ok((OptimizeOperations::Compact(operations), metrics))
 }
 
-fn build_zorder_plan(
+async fn build_zorder_plan(
+    log_store: &dyn LogStore,
     zorder_columns: Vec<String>,
     snapshot: &DeltaTableState,
     partition_keys: &[String],
@@ -981,19 +1006,25 @@ fn build_zorder_plan(
     let mut metrics = Metrics::default();
 
     let mut partition_files: HashMap<String, (IndexMap<String, Scalar>, MergeBin)> = HashMap::new();
-    for add in snapshot.get_active_add_actions_by_partitions(filters)? {
-        let add = add?;
-        let partition_values = add
-            .partition_values()?
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect::<IndexMap<_, _>>();
+    let mut file_stream = snapshot.get_active_add_actions_by_partitions(log_store, filters);
+    while let Some(file) = file_stream.next().await {
+        let file = file?;
+        let partition_values = file
+            .partition_values()
+            .map(|v| {
+                v.fields()
+                    .iter()
+                    .zip(v.values().iter())
+                    .map(|(k, v)| (k.name().to_string(), v.clone()))
+                    .collect::<IndexMap<_, _>>()
+            })
+            .unwrap_or_default();
         metrics.total_considered_files += 1;
         partition_files
             .entry(partition_values.hive_partition_path())
             .or_insert_with(|| (partition_values, MergeBin::new()))
             .1
-            .add(add.add_action());
+            .add(file.add_action());
         debug!("partition_files inside the zorder plan: {partition_files:?}");
     }
 
@@ -1080,7 +1111,7 @@ pub(super) mod zorder {
         }
 
         // DataFusion UDF impl for zorder_key
-        #[derive(Debug)]
+        #[derive(Debug, PartialEq, Eq, Hash)]
         pub struct ZOrderUDF;
 
         impl ScalarUDFImpl for ZOrderUDF {

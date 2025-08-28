@@ -48,9 +48,8 @@ fn schema_type_to_python(schema_type: DataType, py: Python<'_>) -> PyResult<Boun
             let struct_type: StructType = (*struct_type).into();
             Ok(struct_type.into_py_any(py)?.into_bound(py))
         }
-        DataType::Variant(struct_type) => {
-            let struct_type: StructType = (*struct_type).into();
-            Ok(struct_type.into_py_any(py)?.into_bound(py))
+        DataType::Variant(_) => {
+            unimplemented!("Variant type not yet supported")
         }
     }
 }

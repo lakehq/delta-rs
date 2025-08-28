@@ -26,31 +26,32 @@ debug = true
 debug = "line-tables-only"
 
 [workspace.dependencies]
-delta_kernel = { git = "https://github.com/lakehq/delta-kernel-rs.git", rev = "4ab950f", features = [
+delta_kernel = { git = "https://github.com/lakehq/delta-kernel-rs.git", rev = "6369606", features = [
     "arrow-56",
     "default-engine-rustls",
     "internal-api",
-]}
+] }
+
 
 # arrow
-arrow = { version = "56.0.0" }
-arrow-arith = { version = "56.0.0" }
-arrow-array = { version = "56.0.0", features = ["chrono-tz"] }
-arrow-buffer = { version = "56.0.0" }
-arrow-cast = { version = "56.0.0" }
-arrow-ipc = { version = "56.0.0" }
-arrow-json = { version = "56.0.0" }
-arrow-ord = { version = "56.0.0" }
-arrow-row = { version = "56.0.0" }
-arrow-schema = { version = "56.0.0" }
-arrow-select = { version = "56.0.0" }
+arrow = { version = "56.1.0" }
+arrow-arith = { version = "56.1.0" }
+arrow-array = { version = "56.1.0", features = ["chrono-tz"] }
+arrow-buffer = { version = "56.1.0" }
+arrow-cast = { version = "56.1.0" }
+arrow-ipc = { version = "56.1.0" }
+arrow-json = { version = "56.1.0" }
+arrow-ord = { version = "56.1.0" }
+arrow-row = { version = "56.1.0" }
+arrow-schema = { version = "56.1.0" }
+arrow-select = { version = "56.1.0" }
 object_store = { version = "0.12.3" }
-parquet = { version = "56.0.0" }
+parquet = { version = "56.1.0" }
 
 # datafusion
-datafusion = { git = "https://github.com/lakehq/datafusion.git", rev = "65fa8f7" }
-datafusion-ffi = { git = "https://github.com/lakehq/datafusion.git", rev = "65fa8f7" }
-datafusion-proto = { git = "https://github.com/lakehq/datafusion.git", rev = "65fa8f7" }
+datafusion = { git = "https://github.com/apache/datafusion.git", rev = "1c86ec7" }
+datafusion-ffi = { git = "https://github.com/apache/datafusion.git", rev = "1c86ec7" }
+datafusion-proto = { git = "https://github.com/apache/datafusion.git", rev = "1c86ec7" }
 
 # serde
 serde = { version = "1.0.194", features = ["derive"] }
@@ -64,19 +65,17 @@ tracing = { version = "0.1", features = ["log"] }
 regex = { version = "1" }
 thiserror = { version = "2" }
 url = { version = "2" }
-urlencoding = "2.1.3"
+percent-encoding-rfc3986 = { version = "0.1.3" }
 uuid = { version = "1" }
 
 # runtime / async
-async-trait = { version = "0.1" }
+async-trait = { version = "0.1.89" }
 futures = { version = "0.3" }
 tokio = { version = "1" }
 num_cpus = { version = "1" }
 
 [workspace.metadata.typos]
-files.extend-exclude = [
-        "CHANGELOG.md",
-]
+files.extend-exclude = ["CHANGELOG.md"]
 default.extend-ignore-re = [
     # Custom ignore regex patterns: https://github.com/crate-ci/typos/blob/master/docs/reference.md#example-configurations
     "(?s)//\\s*spellchecker:ignore-next-line[^\\n]*\\n[^\\n]*",

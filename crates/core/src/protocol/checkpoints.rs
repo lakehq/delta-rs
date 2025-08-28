@@ -7,7 +7,8 @@ use arrow_array::{BooleanArray, RecordBatch};
 use chrono::Utc;
 use delta_kernel::engine::arrow_data::ArrowEngineData;
 use delta_kernel::engine_data::FilteredEngineData;
-use delta_kernel::snapshot::{LastCheckpointHint, Snapshot};
+use delta_kernel::snapshot::{Snapshot};
+use delta_kernel::last_checkpoint_hint::LastCheckpointHint;
 use delta_kernel::FileMeta;
 use futures::{StreamExt, TryStreamExt};
 use object_store::path::Path;
@@ -20,6 +21,7 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::logstore::{LogStore, LogStoreExt};
+use crate::table::config::TablePropertiesExt as _;
 use crate::{open_table_with_version, DeltaTable};
 use crate::{DeltaResult, DeltaTableError};
 
@@ -35,7 +37,7 @@ pub(crate) async fn create_checkpoint_for(
     } else {
         log_store.table_root_url()
     };
-    let engine = log_store.engine(operation_id).await;
+    let engine = log_store.engine(operation_id);
 
     let task_engine = engine.clone();
     let snapshot =
@@ -289,7 +291,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(table.version(), Some(0));
-        assert_eq!(table.get_schema().unwrap(), &table_schema);
+        assert_eq!(table.snapshot().unwrap().schema(), &table_schema);
         let res = create_checkpoint_for(0, table.log_store.as_ref(), None).await;
         assert!(res.is_ok());
 
@@ -319,7 +321,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(table.version(), Some(0));
-        assert_eq!(table.get_schema().unwrap(), &table_schema);
+        assert_eq!(table.snapshot().unwrap().schema(), &table_schema);
 
         let part_cols: Vec<String> = vec![];
         let metadata =
@@ -407,7 +409,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(table.version(), Some(0));
-        assert_eq!(table.get_schema().unwrap(), &table_schema);
+        assert_eq!(table.snapshot().unwrap().schema(), &table_schema);
         match create_checkpoint_for(1, table.log_store.as_ref(), None).await {
             Ok(_) => {
                 /*
@@ -606,7 +608,7 @@ mod tests {
             count,
             "Expected {count} transactions"
         );
-        let pre_checkpoint_actions = table.snapshot()?.file_actions()?;
+        let pre_checkpoint_actions = table.snapshot()?.file_actions(&table.log_store).await?;
 
         let before = table.version();
         let res = create_checkpoint(&table, None).await;
@@ -619,7 +621,7 @@ mod tests {
             "Why on earth did a checkpoint creata version?"
         );
 
-        let post_checkpoint_actions = table.snapshot()?.file_actions()?;
+        let post_checkpoint_actions = table.snapshot()?.file_actions(&table.log_store).await?;
 
         assert_eq!(
             pre_checkpoint_actions.len(),
