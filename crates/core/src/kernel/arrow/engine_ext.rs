@@ -33,7 +33,7 @@ use crate::kernel::SCAN_ROW_ARROW_SCHEMA;
 /// [`ScanMetadata`] contains (1) a [`RecordBatch`] specifying data files to be scanned
 /// and (2) a vector of transforms (one transform per scan file) that must be applied to the data read
 /// from those files.
-pub(crate) struct ScanMetadataArrow {
+pub struct ScanMetadataArrow {
     /// Record batch with one row per file to scan
     pub scan_files: RecordBatch,
 
@@ -54,7 +54,7 @@ pub(crate) struct ScanMetadataArrow {
 ///
 /// THe trait mainly handles conversion between arrow `RecordBatch` and `ArrowEngineData`.
 /// The exposed methods are arrow-variants of methods already exposed on the kernel scan.
-pub(crate) trait ScanExt {
+pub trait ScanExt {
     /// Get the metadata for a table scan.
     ///
     /// This method handles translation between `EngineData` and `RecordBatch`
@@ -105,7 +105,7 @@ impl ScanExt for Scan {
 ///
 /// These traits provide additional convenience functionality for working with Kernel snapshots.
 /// Some of this may eventually be upstreamed as the kernel implementation matures.
-pub(crate) trait SnapshotExt {
+pub trait SnapshotExt {
     /// Returns the expected file statistics schema for the snapshot.
     fn stats_schema(&self) -> DeltaResult<SchemaRef>;
 
@@ -261,7 +261,7 @@ fn partitions_schema(
 ///    maxValues: <derived min/max schema>,
 /// }
 /// ```
-pub(crate) fn stats_schema(
+pub fn stats_schema(
     physical_file_schema: &Schema,
     table_properties: &TableProperties,
 ) -> Schema {
@@ -297,7 +297,7 @@ pub(crate) fn stats_schema(
 }
 
 // Convert a min/max stats schema into a nullcount schema (all leaf fields are LONG)
-pub(crate) struct NullCountStatsTransform;
+pub struct NullCountStatsTransform;
 impl<'a> SchemaTransform<'a> for NullCountStatsTransform {
     fn transform_primitive(&mut self, _ptype: &'a PrimitiveType) -> Option<Cow<'a, PrimitiveType>> {
         Some(Cow::Owned(PrimitiveType::Long))
