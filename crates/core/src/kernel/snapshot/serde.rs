@@ -171,12 +171,12 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
             .transpose()?
             .flatten();
 
-        let listed_log_files = ListedLogFiles {
+        let listed_log_files = ListedLogFiles::try_new(
             ascending_commit_files,
             ascending_compaction_files,
             checkpoint_parts,
             latest_crc_file,
-        };
+        )?;
 
         let log_root = if !table_url.path().ends_with("/") {
             let mut aux = table_url.clone();
