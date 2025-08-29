@@ -417,6 +417,10 @@ impl Snapshot {
             .map_err(|e| DeltaTableError::GenericError { source: e.into() })??;
         Ok(version)
     }
+
+    pub fn inner(&self) -> &Arc<KernelSnapshot> {
+        &self.inner
+    }
 }
 
 /// A snapshot of a Delta table that has been eagerly loaded into memory.
