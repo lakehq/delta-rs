@@ -325,7 +325,7 @@ impl DeltaTableState {
         let actions = self.snapshot.files.clone();
 
         let evaluator =
-            ARROW_HANDLER.new_expression_evaluator(input_schema, expression, table_schema);
+            ARROW_HANDLER.new_expression_evaluator(input_schema, expression.into(), table_schema);
         let result = evaluator.evaluate_arrow(actions)?;
 
         if flatten {

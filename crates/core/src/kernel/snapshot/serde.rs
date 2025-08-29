@@ -176,7 +176,7 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
             ascending_compaction_files,
             checkpoint_parts,
             latest_crc_file,
-        )?;
+        ).map_err(de::Error::custom)?;
 
         let log_root = if !table_url.path().ends_with("/") {
             let mut aux = table_url.clone();
